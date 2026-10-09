@@ -28,34 +28,22 @@ steps:
     with:
       go-version: stable
 
-  - name: Install required utilities
-    run: |
-      sudo apt-get update
-      sudo apt-get install -y jq
+  - name: Prepare report directory
+    run: mkdir -p reports
 
   - name: Start Juice Shop test target
     run: |
-      docker run -d \
-        --name juice-shop \
-        -p 3000:3000 \
-        bkimminich/juice-shop:latest
-
+      docker run -d --name juice-shop -p 3000:3000 bkimminich/juice-shop:latest
       for attempt in $(seq 1 30); do
-        if curl --fail --silent \
-          http://127.0.0.1:3000/ -o /dev/null; then
+        if curl --fail --silent http://127.0.0.1:3000/ -o /dev/null; then
           echo "Juice Shop is ready."
           exit 0
         fi
-
         echo "Waiting for Juice Shop..."
         sleep 5
       done
-
-      docker logs juice-shop
+      docker logs juice-shop || true
       exit 1
-
-  - name: Prepare report directory
-    run: mkdir -p reports
 
   - name: Run OWASP ZAP baseline scan
     id: zap_scan
@@ -75,14 +63,13 @@ steps:
   - name: Convert ZAP JSON to SARIF
     if: always()
     run: |
-      if [ -s reports/zap-baseline.json ]; then
-        python3 scripts/zap_to_sarif.py \
-          reports/zap-baseline.json \
-          reports/zap-baseline.sarif
-      else
+      if [ ! -s reports/zap-baseline.json ]; then
         echo "::error::ZAP JSON report is missing or empty."
         exit 1
       fi
+      python3 scripts/zap_to_sarif.py \
+        reports/zap-baseline.json \
+        reports/zap-baseline.sarif
 
   - name: Validate ZAP SARIF
     if: always()
@@ -96,10 +83,8 @@ steps:
           raise SystemExit("ZAP SARIF report was not generated.")
 
       data = json.loads(path.read_text())
-
       if data.get("version") != "2.1.0":
           raise SystemExit("Unexpected SARIF version.")
-
       if not isinstance(data.get("runs"), list):
           raise SystemExit("SARIF runs field is missing or invalid.")
 
@@ -112,30 +97,18 @@ steps:
       echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
   - name: Update Nuclei templates
-    run: |
-      "$(go env GOPATH)/bin/nuclei" -update-templates
+    run: nuclei -update-templates
 
   - name: Run Nuclei targeted scan
     id: nuclei_scan
     continue-on-error: true
     run: |
-      set +e
-
-      "$(go env GOPATH)/bin/nuclei" \
+      nuclei \
         -u http://127.0.0.1:3000 \
         -tags cve,misconfig,exposure \
         -severity low,medium,high,critical \
         -jsonl-export reports/nuclei-results.jsonl \
         -sarif-export reports/nuclei.sarif
-
-      nuclei_exit=$?
-      echo "Nuclei exit code: $nuclei_exit"
-
-      if [ ! -f reports/nuclei-results.jsonl ]; then
-        echo "[]" > reports/nuclei-results.jsonl
-      fi
-
-      exit "$nuclei_exit"
 
   - name: Summarize scan findings
     id: summarize_scan_findings
@@ -146,68 +119,57 @@ steps:
       import os
       from pathlib import Path
 
-      zap_high = 0
-      zap_critical = 0
-      nuclei_high = 0
-      nuclei_critical = 0
-
       zap_path = Path("reports/zap-baseline.json")
       nuclei_path = Path("reports/nuclei-results.jsonl")
 
-      if zap_path.is_file():
-          data = json.loads(zap_path.read_text())
-          sites = data.get("site", [])
-          if isinstance(sites, dict):
-              sites = [sites]
+      if not zap_path.is_file() or not zap_path.stat().st_size:
+          raise SystemExit("Cannot summarize: ZAP JSON report is missing.")
+      if not nuclei_path.is_file():
+          raise SystemExit("Cannot summarize: Nuclei JSONL report is missing.")
 
-          for site in sites:
-              for alert in site.get("alerts", []):
-                  risk = str(alert.get("riskcode", "0"))
-                  if risk == "3":
-                      zap_high += 1
-                  elif risk == "4":
-                      zap_critical += 1
+      zap_data = json.loads(zap_path.read_text())
+      sites = zap_data.get("site", []) if isinstance(zap_data, dict) else zap_data
+      if isinstance(sites, dict):
+          sites = [sites]
 
-      if nuclei_path.is_file():
-          for line in nuclei_path.read_text().splitlines():
+      zap_high = 0
+      zap_critical = 0
+      for site in sites:
+          if not isinstance(site, dict):
+              continue
+          for alert in site.get("alerts", []):
+              risk = str(alert.get("riskcode", "0"))
+              if risk == "3":
+                  zap_high += 1
+              elif risk == "4":
+                  zap_critical += 1
+
+      nuclei_high = 0
+      nuclei_critical = 0
+      with nuclei_path.open() as stream:
+          for line in stream:
               if not line.strip():
                   continue
-              try:
-                  result = json.loads(line)
-              except json.JSONDecodeError:
-                  continue
-
-              severity = str(
-                  result.get("info", {}).get("severity", "")
-              ).lower()
-
+              result = json.loads(line)
+              severity = str(result.get("info", {}).get("severity", "")).lower()
               if severity == "high":
                   nuclei_high += 1
               elif severity == "critical":
                   nuclei_critical += 1
-
-      total = (
-          zap_high + zap_critical
-          + nuclei_high + nuclei_critical
-      )
 
       summary = {
           "zap_high": zap_high,
           "zap_critical": zap_critical,
           "nuclei_high": nuclei_high,
           "nuclei_critical": nuclei_critical,
-          "total_high_critical": total,
       }
+      summary["total_high_critical"] = sum(summary.values())
 
-      Path("reports/summary.json").write_text(
-          json.dumps(summary, indent=2) + "\n"
-      )
-
+      Path("reports/summary.json").write_text(json.dumps(summary, indent=2) + "\n")
       with open("reports/summary.md", "w") as report:
           report.write("# DAST Scan Summary\n\n")
           for key, value in summary.items():
-              label = key.replace("_", " ").title()
-              report.write(f"- **{label}:** {value}\n")
+              report.write(f"- **{key.replace('_', ' ').title()}:** {value}\n")
 
       with open(os.environ["GITHUB_OUTPUT"], "a") as output:
           for key, value in summary.items():
@@ -254,22 +216,18 @@ steps:
         echo "::error::ZAP scan failed. Review its logs and reports."
         exit 1
       fi
-
       if [ "$NUCLEI_OUTCOME" != "success" ]; then
         echo "::error::Nuclei scan failed. Review its logs and reports."
         exit 1
       fi
-
       if ! [[ "$TOTAL_HIGH_CRITICAL" =~ ^[0-9]+$ ]]; then
         echo "::error::Could not determine the HIGH/CRITICAL finding count."
         exit 1
       fi
-
       if [ "$TOTAL_HIGH_CRITICAL" -gt 0 ]; then
         echo "::error::Security gate failed: HIGH/CRITICAL findings detected."
         exit 1
       fi
-
       echo "Security gate passed: no HIGH/CRITICAL findings detected."
 
   - name: Notify Slack Channel
