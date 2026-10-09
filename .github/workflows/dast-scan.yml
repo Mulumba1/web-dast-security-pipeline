@@ -1,248 +1,246 @@
 name: Web Application DAST Scan
 
 on:
-push:
-branches: [main]
-pull_request:
-branches: [main]
-workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
 
 permissions:
-contents: read
-security-events: write
-pull-requests: write
+  contents: read
+  security-events: write
+  pull-requests: write
 
 jobs:
-dast-scan:
-name: OWASP ZAP and Nuclei DAST
-runs-on: ubuntu-latest
-timeout-minutes: 30
+  dast-scan:
+    name: OWASP ZAP and Nuclei DAST
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
 
-```
-steps:
-  - name: Check out repository
-    uses: actions/checkout@v4
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
 
-  - name: Set up Go
-    uses: actions/setup-go@v5
-    with:
-      go-version: stable
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: stable
 
-  - name: Prepare report directory
-    run: mkdir -p reports
+      - name: Prepare report directory
+        run: mkdir -p reports
 
-  - name: Start Juice Shop test target
-    run: |
-      docker run -d --name juice-shop -p 3000:3000 bkimminich/juice-shop:latest
-      for attempt in $(seq 1 30); do
-        if curl --fail --silent http://127.0.0.1:3000/ -o /dev/null; then
-          echo "Juice Shop is ready."
-          exit 0
-        fi
-        echo "Waiting for Juice Shop..."
-        sleep 5
-      done
-      docker logs juice-shop || true
-      exit 1
+      - name: Start Juice Shop test target
+        run: |
+          docker run -d --name juice-shop -p 3000:3000 bkimminich/juice-shop:latest
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent [http://127.0.0.1:3000/](http://127.0.0.1:3000/) -o /dev/null; then
+              echo "Juice Shop is ready."
+              exit 0
+            fi
+            echo "Waiting for Juice Shop..."
+            sleep 5
+          done
+          docker logs juice-shop || true
+          exit 1
 
-  - name: Run OWASP ZAP baseline scan
-    id: zap_scan
-    continue-on-error: true
-    run: |
-      docker run --rm \
-        --network host \
-        -v "$GITHUB_WORKSPACE/reports:/zap/wrk:rw" \
-        ghcr.io/zaproxy/zaproxy:stable \
-        zap-baseline.py \
-        -t http://127.0.0.1:3000 \
-        -r zap-baseline.html \
-        -J zap-baseline.json \
-        -w zap-baseline.md \
-        -I
+      - name: Run OWASP ZAP baseline scan
+        id: zap_scan
+        continue-on-error: true
+        run: |
+          docker run --rm \
+            --network host \
+            -v "$GITHUB_WORKSPACE/reports:/zap/wrk:rw" \
+            ghcr.io/zaproxy/zaproxy:stable \
+            zap-baseline.py \
+            -t [http://127.0.0.1:3000](http://127.0.0.1:3000) \
+            -r zap-baseline.html \
+            -J zap-baseline.json \
+            -w zap-baseline.md \
+            -I
 
-  - name: Convert ZAP JSON to SARIF
-    if: always()
-    run: |
-      if [ ! -s reports/zap-baseline.json ]; then
-        echo "::error::ZAP JSON report is missing or empty."
-        exit 1
-      fi
-      python3 scripts/zap_to_sarif.py \
-        reports/zap-baseline.json \
-        reports/zap-baseline.sarif
+      - name: Convert ZAP JSON to SARIF
+        if: always()
+        run: |
+          if [ ! -s reports/zap-baseline.json ]; then
+            echo "::error::ZAP JSON report is missing or empty."
+            exit 1
+          fi
+          python3 scripts/zap_to_sarif.py \
+            reports/zap-baseline.json \
+            reports/zap-baseline.sarif
 
-  - name: Validate ZAP SARIF
-    if: always()
-    run: |
-      python3 - <<'PY'
-      import json
-      from pathlib import Path
+      - name: Validate ZAP SARIF
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
 
-      path = Path("reports/zap-baseline.sarif")
-      if not path.is_file():
-          raise SystemExit("ZAP SARIF report was not generated.")
+          path = Path("reports/zap-baseline.sarif")
+          if not path.is_file():
+              raise SystemExit("ZAP SARIF report was not generated.")
 
-      data = json.loads(path.read_text())
-      if data.get("version") != "2.1.0":
-          raise SystemExit("Unexpected SARIF version.")
-      if not isinstance(data.get("runs"), list):
-          raise SystemExit("SARIF runs field is missing or invalid.")
+          data = json.loads(path.read_text())
+          if data.get("version") != "2.1.0":
+              raise SystemExit("Unexpected SARIF version.")
+          if not isinstance(data.get("runs"), list):
+              raise SystemExit("SARIF runs field is missing or invalid.")
 
-      print("ZAP SARIF JSON is valid.")
-      PY
+          print("ZAP SARIF JSON is valid.")
+          PY
 
-  - name: Install Nuclei
-    run: |
-      go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
-      echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - name: Install Nuclei
+        run: |
+          go install [github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest](https://github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest)
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
-  - name: Update Nuclei templates
-    run: nuclei -update-templates
+      - name: Update Nuclei templates
+        run: nuclei -update-templates
 
-  - name: Run Nuclei targeted scan
-    id: nuclei_scan
-    continue-on-error: true
-    run: |
-      nuclei \
-        -u http://127.0.0.1:3000 \
-        -tags cve,misconfig,exposure \
-        -severity low,medium,high,critical \
-        -jsonl-export reports/nuclei-results.jsonl \
-        -sarif-export reports/nuclei.sarif
+      - name: Run Nuclei targeted scan
+        id: nuclei_scan
+        continue-on-error: true
+        run: |
+          nuclei \
+            -u [http://127.0.0.1:3000](http://127.0.0.1:3000) \
+            -tags cve,misconfig,exposure \
+            -severity low,medium,high,critical \
+            -jsonl-export reports/nuclei-results.jsonl \
+            -sarif-export reports/nuclei.sarif
 
-  - name: Summarize scan findings
-    id: summarize_scan_findings
-    if: always()
-    run: |
-      python3 - <<'PY'
-      import json
-      import os
-      from pathlib import Path
+      - name: Summarize scan findings
+        id: summarize_scan_findings
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
 
-      zap_path = Path("reports/zap-baseline.json")
-      nuclei_path = Path("reports/nuclei-results.jsonl")
+          zap_path = Path("reports/zap-baseline.json")
+          nuclei_path = Path("reports/nuclei-results.jsonl")
 
-      if not zap_path.is_file() or not zap_path.stat().st_size:
-          raise SystemExit("Cannot summarize: ZAP JSON report is missing.")
-      if not nuclei_path.is_file():
-          raise SystemExit("Cannot summarize: Nuclei JSONL report is missing.")
+          if not zap_path.is_file() or not zap_path.stat().st_size:
+              raise SystemExit("Cannot summarize: ZAP JSON report is missing.")
+          if not nuclei_path.is_file():
+              raise SystemExit("Cannot summarize: Nuclei JSONL report is missing.")
 
-      zap_data = json.loads(zap_path.read_text())
-      sites = zap_data.get("site", []) if isinstance(zap_data, dict) else zap_data
-      if isinstance(sites, dict):
-          sites = [sites]
+          zap_data = json.loads(zap_path.read_text())
+          sites = zap_data.get("site", []) if isinstance(zap_data, dict) else zap_data
+          if isinstance(sites, dict):
+              sites = [sites]
 
-      zap_high = 0
-      zap_critical = 0
-      for site in sites:
-          if not isinstance(site, dict):
-              continue
-          for alert in site.get("alerts", []):
-              risk = str(alert.get("riskcode", "0"))
-              if risk == "3":
-                  zap_high += 1
-              elif risk == "4":
-                  zap_critical += 1
-
-      nuclei_high = 0
-      nuclei_critical = 0
-      with nuclei_path.open() as stream:
-          for line in stream:
-              if not line.strip():
+          zap_high = 0
+          zap_critical = 0
+          for site in sites:
+              if not isinstance(site, dict):
                   continue
-              result = json.loads(line)
-              severity = str(result.get("info", {}).get("severity", "")).lower()
-              if severity == "high":
-                  nuclei_high += 1
-              elif severity == "critical":
-                  nuclei_critical += 1
+              for alert in site.get("alerts", []):
+                  risk = str(alert.get("riskcode", "0"))
+                  if risk == "3":
+                      zap_high += 1
+                  elif risk == "4":
+                      zap_critical += 1
 
-      summary = {
-          "zap_high": zap_high,
-          "zap_critical": zap_critical,
-          "nuclei_high": nuclei_high,
-          "nuclei_critical": nuclei_critical,
-      }
-      summary["total_high_critical"] = sum(summary.values())
+          nuclei_high = 0
+          nuclei_critical = 0
+          with nuclei_path.open() as stream:
+              for line in stream:
+                  if not line.strip():
+                      continue
+                  result = json.loads(line)
+                  severity = str(result.get("info", {}).get("severity", "")).lower()
+                  if severity == "high":
+                      nuclei_high += 1
+                  elif severity == "critical":
+                      nuclei_critical += 1
 
-      Path("reports/summary.json").write_text(json.dumps(summary, indent=2) + "\n")
-      with open("reports/summary.md", "w") as report:
-          report.write("# DAST Scan Summary\n\n")
-          for key, value in summary.items():
-              report.write(f"- **{key.replace('_', ' ').title()}:** {value}\n")
+          summary = {
+              "zap_high": zap_high,
+              "zap_critical": zap_critical,
+              "nuclei_high": nuclei_high,
+              "nuclei_critical": nuclei_critical,
+          }
+          summary["total_high_critical"] = sum(summary.values())
 
-      with open(os.environ["GITHUB_OUTPUT"], "a") as output:
-          for key, value in summary.items():
-              output.write(f"{key}={value}\n")
+          Path("reports/summary.json").write_text(json.dumps(summary, indent=2) + "\n")
+          with open("reports/summary.md", "w") as report:
+              report.write("# DAST Scan Summary\n\n")
+              for key, value in summary.items():
+                  report.write(f"- **{key.replace('_', ' ').title()}:** {value}\n")
 
-      print(json.dumps(summary, indent=2))
-      PY
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              for key, value in summary.items():
+                  output.write(f"{key}={value}\n")
 
-  - name: Upload ZAP SARIF to GitHub Code Scanning
-    if: always() && hashFiles('reports/zap-baseline.sarif') != ''
-    uses: github/codeql-action/upload-sarif@v4
-    with:
-      sarif_file: reports/zap-baseline.sarif
-      category: zap-baseline
+          print(json.dumps(summary, indent=2))
+          PY
 
-  - name: Upload Nuclei SARIF to GitHub Code Scanning
-    if: always() && hashFiles('reports/nuclei.sarif') != ''
-    uses: github/codeql-action/upload-sarif@v4
-    with:
-      sarif_file: reports/nuclei.sarif
-      category: nuclei-scan
+      - name: Upload ZAP SARIF to GitHub Code Scanning
+        if: always() && hashFiles('reports/zap-baseline.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: reports/zap-baseline.sarif
+          category: zap-baseline
 
-  - name: Save scan reports as workflow artifacts
-    if: always()
-    uses: actions/upload-artifact@v4
-    with:
-      name: dast-reports
-      path: reports/
-      if-no-files-found: warn
-      retention-days: 14
+      - name: Upload Nuclei SARIF to GitHub Code Scanning
+        if: always() && hashFiles('reports/nuclei.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: reports/nuclei.sarif
+          category: nuclei-scan
 
-  - name: Enforce HIGH and CRITICAL severity gate
-    if: always()
-    env:
-      ZAP_OUTCOME: ${{ steps.zap_scan.outcome }}
-      NUCLEI_OUTCOME: ${{ steps.nuclei_scan.outcome }}
-      TOTAL_HIGH_CRITICAL: ${{ steps.summarize_scan_findings.outputs.total_high_critical }}
-    run: |
-      echo "ZAP outcome: $ZAP_OUTCOME"
-      echo "Nuclei outcome: $NUCLEI_OUTCOME"
-      echo "HIGH/CRITICAL findings: ${TOTAL_HIGH_CRITICAL:-unknown}"
+      - name: Save scan reports as workflow artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dast-reports
+          path: reports/
+          if-no-files-found: warn
+          retention-days: 14
 
-      if [ "$ZAP_OUTCOME" != "success" ]; then
-        echo "::error::ZAP scan failed. Review its logs and reports."
-        exit 1
-      fi
-      if [ "$NUCLEI_OUTCOME" != "success" ]; then
-        echo "::error::Nuclei scan failed. Review its logs and reports."
-        exit 1
-      fi
-      if ! [[ "$TOTAL_HIGH_CRITICAL" =~ ^[0-9]+$ ]]; then
-        echo "::error::Could not determine the HIGH/CRITICAL finding count."
-        exit 1
-      fi
-      if [ "$TOTAL_HIGH_CRITICAL" -gt 0 ]; then
-        echo "::error::Security gate failed: HIGH/CRITICAL findings detected."
-        exit 1
-      fi
-      echo "Security gate passed: no HIGH/CRITICAL findings detected."
+      - name: Enforce HIGH and CRITICAL severity gate
+        if: always()
+        env:
+          ZAP_OUTCOME: ${{ steps.zap_scan.outcome }}
+          NUCLEI_OUTCOME: ${{ steps.nuclei_scan.outcome }}
+          TOTAL_HIGH_CRITICAL: ${{ steps.summarize_scan_findings.outputs.total_high_critical }}
+        run: |
+          echo "ZAP outcome: $ZAP_OUTCOME"
+          echo "Nuclei outcome: $NUCLEI_OUTCOME"
+          echo "HIGH/CRITICAL findings: ${TOTAL_HIGH_CRITICAL:-unknown}"
 
-  - name: Notify Slack Channel
-    if: always()
-    uses: slackapi/slack-github-action@v2.1.1
-    env:
-      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-      SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
-    with:
-      payload: |
-        {
-          "text": "DAST pipeline finished for ${{ github.repository }}. Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}. Job status: ${{ job.status }}. ZAP HIGH: ${{ steps.summarize_scan_findings.outputs.zap_high }}, ZAP CRITICAL: ${{ steps.summarize_scan_findings.outputs.zap_critical }}, Nuclei HIGH: ${{ steps.summarize_scan_findings.outputs.nuclei_high }}, Nuclei CRITICAL: ${{ steps.summarize_scan_findings.outputs.nuclei_critical }}."
-        }
+          if [ "$ZAP_OUTCOME" != "success" ]; then
+            echo "::error::ZAP scan failed. Review its logs and reports."
+            exit 1
+          fi
+          if [ "$NUCLEI_OUTCOME" != "success" ]; then
+            echo "::error::Nuclei scan failed. Review its logs and reports."
+            exit 1
+          fi
+          if ! [[ "$TOTAL_HIGH_CRITICAL" =~ ^[0-9]+$ ]]; then
+            echo "::error::Could not determine the HIGH/CRITICAL finding count."
+            exit 1
+          fi
+          if [ "$TOTAL_HIGH_CRITICAL" -gt 0 ]; then
+            echo "::error::Security gate failed: HIGH/CRITICAL findings detected."
+            exit 1
+          fi
+          echo "Security gate passed: no HIGH/CRITICAL findings detected."
 
-  - name: Clean up test target
-    if: always()
-    run: docker rm -f juice-shop || true
-```
+      - name: Notify Slack Channel
+        if: always()
+        uses: slackapi/slack-github-action@v1.26.0
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+        with:
+          payload: |
+            {
+              "text": "DAST pipeline finished for ${{ github.repository }}. Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}. Job status: ${{ job.status }}."
+            }
+
+      - name: Clean up test target
+        if: always()
+        run: docker rm -f juice-shop || true
