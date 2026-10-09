@@ -54,7 +54,7 @@ jobs:
             -r zap-baseline.html \
             -J zap-baseline.json \
             -w zap-baseline.md
-
+            -I
       - name: Convert ZAP JSON to SARIF
         if: always()
         run: |
