@@ -63,17 +63,17 @@ def main():
             for instance in alert.get("instances", []):
                 uri = instance.get("uri", site.get("@name", ""))
                 parsed = urlsplit(uri)
+
+                # DAST findings refer to a running URL, not a source file.
+                # Use a repository-relative anchor for SARIF compatibility
+                # and preserve the real target URL in result properties.
                 location = {
                     "physicalLocation": {
-                        "artifactLocation": {"uri": uri}
+                        "artifactLocation": {
+                            "uri": "docs/architecture.md"
+                        }
                     }
                 }
-
-                if parsed.scheme and parsed.netloc:
-                    location["logicalLocations"] = [{
-                        "name": parsed.path or "/",
-                        "kind": "url",
-                    }]
 
                 result = {
                     "ruleId": alert_id,
@@ -87,6 +87,7 @@ def main():
                     "locations": [location],
                     "properties": {
                         "zapRisk": label,
+                        "scannedUrl": uri,
                         "confidence": alert.get("confidence"),
                         "method": instance.get("method"),
                         "parameter": instance.get("param"),
