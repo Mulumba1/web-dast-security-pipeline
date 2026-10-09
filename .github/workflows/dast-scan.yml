@@ -26,6 +26,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: stable
+          cache: false
 
       - name: Prepare report directory
         run: |
@@ -166,14 +167,14 @@ jobs:
 
       - name: Upload ZAP SARIF to GitHub Code Scanning
         if: always() && hashFiles('reports/zap-baseline.sarif') != ''
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: reports/zap-baseline.sarif
           category: zap-baseline
 
       - name: Upload Nuclei SARIF to GitHub Code Scanning
         if: always() && hashFiles('reports/nuclei.sarif') != ''
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: reports/nuclei.sarif
           category: nuclei-scan
