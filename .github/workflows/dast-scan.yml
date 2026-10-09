@@ -44,7 +44,7 @@ jobs:
       - name: Run ZAP baseline scan
         run: |
           mkdir -p reports
-
+          chmod 777 reports
           docker run --rm \
             --network host \
             -v "$GITHUB_WORKSPACE/reports:/zap/wrk:rw" \
