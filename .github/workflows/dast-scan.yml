@@ -293,4 +293,3 @@ jobs:
       - name: Clean up test target
         if: always()
         run: docker rm -f juice-shop || true
-EOF
