@@ -34,3 +34,5 @@ Scan reports are stored in `~/dast-reports/` on the Ubuntu VM.
 ## Security
 
 Only scan applications that you own or have explicit authorization to test. Review scanner findings before treating them as confirmed vulnerabilities.
+
+<- Document severity thresholds and accepted Verification trigger for PR security annotations -->
