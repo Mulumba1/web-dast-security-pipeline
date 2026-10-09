@@ -1,0 +1,92 @@
+
+name: Web Application DAST Scan
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  zap-baseline:
+    name: OWASP ZAP Baseline Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Start Juice Shop test target
+        run: |
+          docker run -d \
+            --name juice-shop \
+            -p 3000:3000 \
+            bkimminich/juice-shop:latest
+
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:3000/ \
+              -o /dev/null; then
+              echo "Juice Shop is ready."
+              exit 0
+            fi
+            echo "Waiting for Juice Shop..."
+            sleep 5
+          done
+
+          docker logs juice-shop
+          exit 1
+
+      - name: Run ZAP baseline scan
+        run: |
+          mkdir -p reports
+
+          docker run --rm \
+            --network host \
+            -v "$GITHUB_WORKSPACE/reports:/zap/wrk:rw" \
+            ghcr.io/zaproxy/zaproxy:stable \
+            zap-baseline.py \
+            -t http://127.0.0.1:3000 \
+            -r zap-baseline.html \
+            -J zap-baseline.json \
+            -w zap-baseline.md
+
+      - name: Convert ZAP JSON to SARIF
+        if: always()
+        run: |
+          if [ -f reports/zap-baseline.json ]; then
+            python3 scripts/zap_to_sarif.py \
+              reports/zap-baseline.json \
+              reports/zap-baseline.sarif
+          else
+            echo "ZAP JSON report was not generated."
+            exit 1
+          fi
+
+      - name: Upload SARIF to GitHub Code Scanning
+        if: always() && hashFiles('reports/zap-baseline.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: reports/zap-baseline.sarif
+          category: zap-baseline
+
+      - name: Save scan reports as workflow artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zap-dast-reports
+          path: reports/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Show Juice Shop logs if the job failed
+        if: failure()
+        run: docker logs juice-shop || true
+
+      - name: Clean up test target
+        if: always()
+        run: docker rm -f juice-shop || true
