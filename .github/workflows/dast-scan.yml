@@ -140,6 +140,28 @@ jobs:
 
           exit "$nuclei_exit"
 
+      - name: Sanitize Nuclei SARIF URI
+        if: always() && hashFiles('reports/nuclei.sarif') != ''
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          p = Path("reports/nuclei.sarif")
+          if p.is_file():
+              data = json.loads(p.read_text())
+              for run in data.get("runs", []):
+                  for res in run.get("results", []):
+                      for loc in res.get("locations", []):
+                          ploc = loc.get("physicalLocation", {})
+                          if "artifactLocation" in ploc:
+                              uri = ploc["artifactLocation"].get("uri", "")
+                              if uri.startswith("http://") or uri.startswith("https://") or uri == ".":
+                                  ploc["artifactLocation"]["uri"] = "README.md"
+              p.write_text(json.dumps(data, indent=2))
+              print("Nuclei SARIF URIs sanitized successfully.")
+          PY
+
       - name: Summarize scan findings
         id: summarize_scan_findings
         if: always()
