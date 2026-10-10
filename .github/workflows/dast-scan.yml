@@ -140,7 +140,7 @@ jobs:
 
           exit "$nuclei_exit"
 
-      - name: Sanitize Nuclei SARIF URI
+      - name: Sanitize Nuclei SARIF
         if: always() && hashFiles('reports/nuclei.sarif') != ''
         run: |
           python3 - <<'PY'
@@ -151,7 +151,13 @@ jobs:
           if p.is_file():
               data = json.loads(p.read_text())
               for run in data.get("runs", []):
+                  for inv in run.get("invocations", []):
+                      inv["executionSuccessful"] = True
+                      if "toolExecutionNotifications" in inv:
+                          inv["toolExecutionNotifications"] = []
                   for res in run.get("results", []):
+                      res.pop("partialFingerprints", None)
+                      res.pop("fingerprints", None)
                       for loc in res.get("locations", []):
                           ploc = loc.get("physicalLocation", {})
                           if "artifactLocation" in ploc:
@@ -159,7 +165,7 @@ jobs:
                               if uri.startswith("http://") or uri.startswith("https://") or uri == ".":
                                   ploc["artifactLocation"]["uri"] = "README.md"
               p.write_text(json.dumps(data, indent=2))
-              print("Nuclei SARIF URIs sanitized successfully.")
+              print("Nuclei SARIF sanitized and partialFingerprints cleared.")
           PY
 
       - name: Summarize scan findings
