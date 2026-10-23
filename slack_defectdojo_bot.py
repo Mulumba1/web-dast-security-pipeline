@@ -1,62 +1,64 @@
 #!/usr/bin/env python3
 """
 slack_defectdojo_bot.py
-Queries DefectDojo API v2 for engagement metrics and posts a 
-rich ChatOps card with active vs deduplicated counts to Slack.
+Fetches triaged engagement metrics from DefectDojo API v2
+and posts an automated summary card to Slack.
 """
 
 import os
 import sys
 import requests
 
-DEFECTDOJO_URL = os.getenv("DEFECTDOJO_URL", "http://localhost:8080").rstrip("/")
-API_KEY = os.getenv("DEFECTDOJO_API_KEY", "")
-ENGAGEMENT_ID = os.getenv("DEFECTDOJO_ENGAGEMENT_ID", "1")
-SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL", "")
+DEFECTDOJO_URL = os.environ.get("DEFECTDOJO_URL", "").rstrip("/")
+DEFECTDOJO_API_KEY = os.environ.get("DEFECTDOJO_API_KEY", "")
+ENGAGEMENT_ID = os.environ.get("DEFECTDOJO_ENGAGEMENT_ID", "1")
+SLACK_WEBHOOK_URL = os.environ.get("SLACK_WEBHOOK_URL", "")
+
+if not DEFECTDOJO_URL or not DEFECTDOJO_API_KEY:
+    print("[!] DEFECTDOJO_URL or DEFECTDOJO_API_KEY missing. Exiting cleanly.")
+    sys.exit(0)
 
 HEADERS = {
-    "Authorization": f"Token {API_KEY}",
-    "Content-Type": "application/json"
+    "Authorization": f"Token {DEFECTDOJO_API_KEY}",
+    "Accept": "application/json"
 }
 
 def get_engagement_stats():
-    # Fetch all findings for this engagement
-    url = f"{DEFECTDOJO_URL}/api/v2/findings/?test__engagement={ENGAGEMENT_ID}&limit=100"
-    res = requests.get(url, headers=HEADERS)
-    if res.status_code != 200:
-        print(f"[-] Failed to fetch findings: {res.status_code} {res.text}")
-        return None
-    
-    findings = res.json().get("results", [])
-    
-    total = len(findings)
-    duplicates = sum(1 for f in findings if f.get("duplicate") is True)
-    active = sum(1 for f in findings if f.get("active") is True and not f.get("duplicate"))
-    
-    # Severity breakdown of active findings
-    critical = sum(1 for f in findings if f.get("severity") == "Critical" and f.get("active") and not f.get("duplicate"))
-    high = sum(1 for f in findings if f.get("severity") == "High" and f.get("active") and not f.get("duplicate"))
-    medium = sum(1 for f in findings if f.get("severity") == "Medium" and f.get("active") and not f.get("duplicate"))
-    low = sum(1 for f in findings if f.get("severity") == "Low" and f.get("active") and not f.get("duplicate"))
-    
-    return {
-        "total": total,
-        "active": active,
-        "duplicates": duplicates,
-        "critical": critical,
-        "high": high,
-        "medium": medium,
-        "low": low
-    }
+    url = f"{DEFECTDOJO_URL}/api/v2/findings/?test__engagement={ENGAGEMENT_ID}&limit=200"
+    try:
+        res = requests.get(url, headers=HEADERS, timeout=10)
+        res.raise_for_status()
+        data = res.json()
+        findings = data.get("results", [])
 
-def post_to_slack(stats):
+        total = len(findings)
+        active = sum(1 for f in findings if f.get("active") and not f.get("duplicate"))
+        duplicates = sum(1 for f in findings if f.get("duplicate"))
+
+        sev_counts = {"Critical": 0, "High": 0, "Medium": 0, "Low": 0}
+        for f in findings:
+            if f.get("active") and not f.get("duplicate"):
+                sev = f.get("severity")
+                if sev in sev_counts:
+                    sev_counts[sev] += 1
+
+        return {
+            "total": total,
+            "active": active,
+            "duplicates": duplicates,
+            "severities": sev_counts
+        }
+    except Exception as e:
+        print(f"[!] Warning: Could not connect to DefectDojo API: {e}")
+        return None
+
+def send_slack_card(stats):
     if not SLACK_WEBHOOK_URL:
-        print("[!] SLACK_WEBHOOK_URL not set. Skipping Slack delivery.")
-        print(f"[+] Local Stats Summary: Active: {stats['active']} | Deduplicated: {stats['duplicates']}")
+        print("[!] SLACK_WEBHOOK_URL not set; skipping webhook post.")
         return
 
     payload = {
-        "text": "🛡️ *DefectDojo Vulnerability Orchestration Summary*",
+        "text": f"DefectDojo DAST/IAST Triaged Findings: {stats['active']} Active Issues",
         "blocks": [
             {
                 "type": "header",
@@ -70,29 +72,33 @@ def post_to_slack(stats):
                 "type": "section",
                 "fields": [
                     {"type": "mrkdwn", "text": f"*Engagement ID:*\n{ENGAGEMENT_ID}"},
-                    {"type": "mrkdwn", "text": f"*Target Environment:*\nOWASP Juice Shop (IAST)"},
+                    {"type": "mrkdwn", "text": "*Target Environment:*\nOWASP Juice Shop (IAST)"},
                     {"type": "mrkdwn", "text": f"*Total Findings Ingested:*\n{stats['total']}"},
                     {"type": "mrkdwn", "text": f"*Active Unique Findings:*\n`{stats['active']}`"},
                     {"type": "mrkdwn", "text": f"*Deduplicated Findings:*\n`{stats['duplicates']}` (Suppressed)"},
-                    {"type": "mrkdwn", "text": f"*Severity (Active):*\n🚨 {stats['critical']} Crit | 🔴 {stats['high']} High | 🟡 {stats['medium']} Med | 🔵 {stats['low']} Low"}
+                    {"type": "mrkdwn", "text": f"*Severity (Active):*\n🚨 {stats['severities']['Critical']} Crit | 🔴 {stats['severities']['High']} High | 🟡 {stats['severities']['Medium']} Med | 🔵 {stats['severities']['Low']} Low"}
                 ]
             },
             {
                 "type": "context",
                 "elements": [
-                    {"type": "mrkdwn", "text": f"Scanners: *OWASP ZAP* & *Nuclei* | Ingestion: *API v2* | Automated via GitHub Actions Pipeline"}
+                    {
+                        "type": "mrkdwn",
+                        "text": "Scanners: *OWASP ZAP & Nuclei* | Ingestion: *API v2* | Automated via GitHub Actions Pipeline"
+                    }
                 ]
             }
         ]
     }
-
-    res = requests.post(SLACK_WEBHOOK_URL, json=payload)
-    if res.status_code == 200:
-        print("[+] Slack summary card posted successfully.")
-    else:
-        print(f"[-] Slack webhook failed: {res.status_code} {res.text}")
+    try:
+        resp = requests.post(SLACK_WEBHOOK_URL, json=payload, timeout=10)
+        print(f"[+] Slack notification sent (Status: {resp.status_code})")
+    except Exception as e:
+        print(f"[!] Warning: Could not post to Slack: {e}")
 
 if __name__ == "__main__":
     stats = get_engagement_stats()
     if stats:
-        post_to_slack(stats)
+        send_slack_card(stats)
+    else:
+        print("[*] Completed without remote metrics.")

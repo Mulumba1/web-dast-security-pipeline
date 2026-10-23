@@ -26,10 +26,23 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install Ingestion Dependencies
+      - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
           pip install requests
+
+      - name: Wait for Juice Shop Target
+        run: |
+          until curl -s -o /dev/null -w "%{http_code}" http://localhost:3000 | grep -q "200"; do
+            echo "Waiting for target on port 3000..."
+            sleep 2
+          done
+          echo "Target is ready."
+
+      - name: Run IAST Coverage Drivers
+        run: |
+          python traffic_driver.py || true
+          python route_uplift_driver.py || true
 
       - name: Run OWASP ZAP Baseline Scan
         uses: zaproxy/action-baseline@v0.12.0
@@ -40,7 +53,10 @@ jobs:
         continue-on-error: true
 
       - name: Convert ZAP JSON to SARIF
-        run: python zap_to_sarif.py
+        run: |
+          if [ -f "zap_to_sarif.py" ]; then
+            python zap_to_sarif.py || true
+          fi
         continue-on-error: true
 
       - name: Run Nuclei Security Scan
@@ -56,8 +72,12 @@ jobs:
           DEFECTDOJO_API_KEY: ${{ secrets.DEFECTDOJO_API_KEY }}
           DEFECTDOJO_ENGAGEMENT_ID: ${{ secrets.DEFECTDOJO_ENGAGEMENT_ID }}
         run: |
-          python import_to_defectdojo.py --file zap-baseline.sarif --type SARIF
-          python import_to_defectdojo.py --file nuclei.sarif --type SARIF
+          if [ -n "$DEFECTDOJO_URL" ] && [ -n "$DEFECTDOJO_API_KEY" ]; then
+            python import_to_defectdojo.py --file zap-baseline.sarif --type SARIF || true
+            python import_to_defectdojo.py --file nuclei.sarif --type SARIF || true
+          else
+            echo "[INFO] DefectDojo URL or API Key secret not configured in GitHub; skipping cloud push."
+          fi
         continue-on-error: true
 
       - name: Post Deduplicated DefectDojo Metrics to Slack
@@ -67,4 +87,10 @@ jobs:
           DEFECTDOJO_API_KEY: ${{ secrets.DEFECTDOJO_API_KEY }}
           DEFECTDOJO_ENGAGEMENT_ID: ${{ secrets.DEFECTDOJO_ENGAGEMENT_ID }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-        run: python slack_defectdojo_bot.py
+        run: |
+          if [ -n "$SLACK_WEBHOOK_URL" ] && [ -n "$DEFECTDOJO_URL" ]; then
+            python slack_defectdojo_bot.py || true
+          else
+            echo "[INFO] Slack webhook or DefectDojo URL not configured in cloud secrets; skipping Slack alert."
+          fi
+        continue-on-error: true
