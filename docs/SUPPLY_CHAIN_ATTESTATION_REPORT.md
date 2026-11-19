@@ -44,3 +44,16 @@ The cluster-wide `ImageValidatingPolicy` (`enforce-signed-and-attested-images`) 
 - **k3s Air-Gapped / Throttled Registry Routing:** Configured `/etc/rancher/k3s/registries.yaml` to map `localhost:5000` over HTTP (`172.17.0.1:5000`) and patched `kyverno-admission-controller` with `hostNetwork: true` (`ClusterFirstWithHostNet`) so the admission webhook resolves `localhost:5000` directly against the host OCI registry.
 - **Kyverno v1.20 Policy Migration:** Migrated from legacy `kyverno.io/v1` `ClusterPolicy` (removed for execution in Kyverno v1.20) to the native CEL-based `policies.kyverno.io/v1` `ImageValidatingPolicy` API.
 - **Private Key Hygiene:** Excluded `cosign.key` via `.gitignore` so only the public verification key (`cosign.pub`) and declarative policy YAML are version-controlled.
+
+---
+
+## 6. Visual Verification Evidence
+
+### 6.1 Active Kyverno v1.20 `ImageValidatingPolicy` (`READY: true`)
+![Kyverno ImageValidatingPolicy Ready](images/01-kyverno-policy-ready.png)
+
+### 6.2 Negative Admission Test — Unsigned Container Image Denied
+![Negative Admission Test Denied](images/02-negative-admission-denied.png)
+
+### 6.3 Positive Admission Test — Signed & CycloneDX-Attested Image Admitted (`1/1 Running`)
+![Positive Admission Test Running](images/03-positive-admission-running.png)

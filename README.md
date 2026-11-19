@@ -38,3 +38,13 @@ Only scan applications that you own or have explicit authorization to test. Revi
 <- Document severity thresholds and accepted Verification trigger for PR security annotations -->
 
 <- Document severity thresholds and accepted DAST Inline Annotation Test Trigger -->
+
+---
+
+## Autonomous Container Supply Chain Attestation & Policy-as-Code Enforcement
+
+Cryptographic container provenance and Kubernetes admission enforcement implemented using **Sigstore Cosign**, **CycloneDX SBOM in-toto Attestations**, and **Kyverno v1.20 (`ImageValidatingPolicy`)**:
+
+- **Policy Manifest:** [`policies/kyverno-supply-chain-policy.yaml`](policies/kyverno-supply-chain-policy.yaml)
+- **Public Verification Key:** [`cosign.pub`](cosign.pub)
+- **Technical Verification Report:** [`docs/SUPPLY_CHAIN_ATTESTATION_REPORT.md`](docs/SUPPLY_CHAIN_ATTESTATION_REPORT.md)
