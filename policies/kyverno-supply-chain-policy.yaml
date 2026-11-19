@@ -1,0 +1,44 @@
+apiVersion: policies.kyverno.io/v1
+kind: ImageValidatingPolicy
+metadata:
+  name: enforce-signed-and-attested-images
+  annotations:
+    policies.kyverno.io/title: Enforce Cryptographic Image Signature & CycloneDX SBOM Attestation
+    policies.kyverno.io/category: Software Supply Chain Security
+    policies.kyverno.io/severity: critical
+    policies.kyverno.io/description: >-
+      Blocks any Pod deployment whose container image is not cryptographically signed
+      by the authorized Cosign keypair or lacks a verified CycloneDX SBOM attestation.
+spec:
+  validationActions:
+    - Deny
+  webhookConfiguration:
+    timeoutSeconds: 30
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["pods"]
+  matchImageReferences:
+    - glob: "*"
+  attestors:
+    - name: cosign_key
+      cosign:
+        key:
+          data: |-
+            -----BEGIN PUBLIC KEY-----
+            MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEpjfvnd0d73mmWwgUEgZv8eZNPcYt
+            VSjeGqoaeEm833rOuhXKGRJRrTCH1IdmwvN33wyL2CVZZc+sKeUuq+gKrg==
+            -----END PUBLIC KEY-----
+  attestations:
+    - name: cyclonedx_sbom
+      intoto:
+        type: https://cyclonedx.org/bom
+  validations:
+    - expression: >-
+        images.containers.all(image,
+          verifyImageSignatures(image, [attestors.cosign_key]) > 0 &&
+          verifyAttestationSignatures(image, attestations.cyclonedx_sbom, [attestors.cosign_key]) > 0
+        )
+      message: "Container image must be signed by the authorized Cosign key and carry a valid CycloneDX SBOM attestation."
