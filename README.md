@@ -48,3 +48,4 @@ Cryptographic container provenance and Kubernetes admission enforcement implemen
 - **Policy Manifest:** [`policies/kyverno-supply-chain-policy.yaml`](policies/kyverno-supply-chain-policy.yaml)
 - **Public Verification Key:** [`cosign.pub`](cosign.pub)
 - **Technical Verification Report:** [`docs/SUPPLY_CHAIN_ATTESTATION_REPORT.md`](docs/SUPPLY_CHAIN_ATTESTATION_REPORT.md)
+- **Signing & Attestation Script:** [`scripts/sign-and-attest.sh`](scripts/sign-and-attest.sh)
