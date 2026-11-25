@@ -1,9 +1,13 @@
-apiVersion: admissionregistration.k8s.io/v1
-kind: ValidatingAdmissionPolicy
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
 metadata:
   name: require-immutable-image-digests
 spec:
   failurePolicy: Fail
+  validationActions:
+    - Deny
+  webhookConfiguration:
+    timeoutSeconds: 15
   matchConstraints:
     resourceRules:
       - apiGroups: [""]
@@ -11,14 +15,5 @@ spec:
         operations: ["CREATE", "UPDATE"]
         resources: ["pods"]
   validations:
-    - expression: "object.spec.containers.all(c, c.image.contains('@sha256:'))"
+    - expression: "request.object.spec.containers.all(c, c.image.contains('@sha256:'))"
       message: "Container images must use immutable @sha256 digest references; mutable tag-only references are prohibited."
----
-apiVersion: admissionregistration.k8s.io/v1
-kind: ValidatingAdmissionPolicyBinding
-metadata:
-  name: require-immutable-image-digests-binding
-spec:
-  policyName: require-immutable-image-digests
-  validationActions:
-    - Deny
