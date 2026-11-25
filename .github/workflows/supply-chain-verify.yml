@@ -1,0 +1,44 @@
+name: Supply Chain Attestation & Policy Verification
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  verify-supply-chain-controls:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install Sigstore Cosign
+        uses: sigstore/cosign-installer@v3.7.0
+
+      - name: Install Kyverno CLI
+        run: |
+          KYVERNO_VERSION="v1.13.4"
+          curl -sSL "https://github.com/kyverno/kyverno/releases/download/${KYVERNO_VERSION}/kyverno-cli_${KYVERNO_VERSION}_linux_x86_64.tar.gz" -o kyverno.tar.gz
+          tar -xzf kyverno.tar.gz kyverno
+          sudo mv kyverno /usr/local/bin/kyverno
+          kyverno version
+
+      - name: Verify Public Key Parity & Signing Script Syntax
+        run: |
+          bash -n scripts/sign-and-attest.sh
+          sha256sum cosign.pub
+          grep -q "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEpjfvnd0d73mmWwgUEgZv8eZNPcYt" policies/kyverno-supply-chain-policy.yaml
+
+      - name: Run Ephemeral Cosign Sign & CycloneDX Attestation Roundtrip
+        env:
+          COSIGN_PASSWORD: "ci-ephemeral-test-password"
+        run: |
+          cosign generate-key-pair
+          echo '{"bomFormat":"CycloneDX","specVersion":"1.5","version":1}' > /tmp/test-bom.json
+          cosign sign-blob --yes --key cosign.key --output-signature /tmp/test.sig /tmp/test-bom.json
+          cosign verify-blob --key cosign.pub --signature /tmp/test.sig /tmp/test-bom.json
+
+      - name: Run Kyverno Policy Test Suite
+        run: |
+          kyverno test tests/kyverno/

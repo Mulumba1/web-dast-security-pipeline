@@ -1,0 +1,19 @@
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: supply-chain-policy-tests
+policies:
+  - ../../policies/kyverno-supply-chain-policy.yaml
+resources:
+  - resources.yaml
+results:
+  - policy: enforce-signed-and-attested-images
+    rule: enforce-signed-and-attested-images
+    resource: unsigned-public-nginx
+    kind: Pod
+    result: fail
+  - policy: enforce-signed-and-attested-images
+    rule: enforce-signed-and-attested-images
+    resource: tag-only-juice-shop
+    kind: Pod
+    result: fail

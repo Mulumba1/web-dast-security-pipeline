@@ -2,13 +2,6 @@ apiVersion: policies.kyverno.io/v1
 kind: ImageValidatingPolicy
 metadata:
   name: enforce-signed-and-attested-images
-  annotations:
-    policies.kyverno.io/title: Enforce Cryptographic Image Signature & CycloneDX SBOM Attestation
-    policies.kyverno.io/category: Software Supply Chain Security
-    policies.kyverno.io/severity: critical
-    policies.kyverno.io/description: >-
-      Blocks any Pod deployment whose container image is not cryptographically signed
-      by the authorized Cosign keypair or lacks a verified CycloneDX SBOM attestation.
 spec:
   validationActions:
     - Deny

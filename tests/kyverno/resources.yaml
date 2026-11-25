@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: unsigned-public-nginx
+spec:
+  containers:
+    - name: nginx
+      image: nginx:latest
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: tag-only-juice-shop
+spec:
+  containers:
+    - name: juice-shop
+      image: localhost:5000/juice-shop:v1.0
